@@ -16,6 +16,13 @@ inputs:
   environment-variables:
     description: 'Variables to add to the container. Each variable is of the form KEY=value, you can specify multiple variables with multi-line YAML strings.'
     required: false
+  secrets:
+    description: 'Secrets to add to the container. Each secret is of the form KEY=valueFrom, where valueFrom is a secret arn. You can specify multiple secrets with multi-line YAML strings.'
+    required: false
+  dynamic-variables:
+    description: 'Dynamic variables to replace matching keys with values. Each variable is of the form KEY=value, you can specify multiple variables with multi-line YAML strings. TD file should contains the key in "{{ key }}" format.'
+    required: false
+
 outputs:
   task-definition:
     description: 'The path to the rendered task definition file'

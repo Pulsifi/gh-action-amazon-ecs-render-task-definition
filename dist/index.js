@@ -1395,7 +1395,9 @@ async function run() {
     const containerName = core.getInput('container-name', { required: true });
     const imageURI = core.getInput('image', { required: true });
 
+    const dynamicVariables = core.getInput('dynamic-variables', { required: false });
     const environmentVariables = core.getInput('environment-variables', { required: false });
+    const secrets = core.getInput('secrets', { required: false })
 
     // Parse the task definition
     const taskDefPath = path.isAbsolute(taskDefinitionFile) ?
@@ -1404,7 +1406,44 @@ async function run() {
     if (!fs.existsSync(taskDefPath)) {
       throw new Error(`Task definition file does not exist: ${taskDefinitionFile}`);
     }
-    const taskDefContents = require(taskDefPath);
+
+    let taskDefContents = require(taskDefPath);
+
+    core.debug('dynamicVariables', dynamicVariables);
+    console.log("dynamicVariables", dynamicVariables)
+
+    if (dynamicVariables) {
+      let rawJsonString = JSON.stringify(taskDefContents, null, 2);
+
+      dynamicVariables.split('\n').forEach(function (line) {
+        // Trim whitespace
+        const trimmedLine = line.trim();
+        // Skip if empty
+        if (trimmedLine.length === 0) {
+          return;
+        }
+        // Split on =
+        const separatorIdx = trimmedLine.indexOf('=');
+        // If there's nowhere to split
+        if (separatorIdx === -1) {
+          throw new Error(
+            `Cannot parse the dynamic variable '${trimmedLine}'. Dynamic variable pairs must be of the form NAME=value.`
+          );
+        }
+        // Build object
+        const key = trimmedLine.substring(0, separatorIdx);
+        const value = trimmedLine.substring(separatorIdx + 1);
+
+        core.debug(key);
+        core.debug(value);
+        console.log("key", key)
+        console.log("value", value)
+
+        rawJsonString = rawJsonString.replace(new RegExp(`{{ ${key} }}`, "g"), value);
+      });
+
+      taskDefContents = JSON.parse(rawJsonString);
+    }
 
     // Insert the image URI
     if (!Array.isArray(taskDefContents.containerDefinitions)) {
@@ -1453,8 +1492,46 @@ async function run() {
           containerDef.environment.push(variable);
         }
       })
-    }
+      
+    if (secrets) {
+        // If environment array is missing, create it
+        if (!Array.isArray(containerDef.secrets)) {
+          containerDef.secrets = [];
+        }
 
+        // Get pairs by splitting on newlines
+        secrets.split('\n').forEach(function (line) {
+          // Trim whitespace
+          const trimmedLine = line.trim();
+          // Skip if empty
+          if (trimmedLine.length === 0) { return; }
+          // Split on =
+          const separatorIdx = trimmedLine.indexOf("=");
+          // If there's nowhere to split
+          if (separatorIdx === -1) {
+              throw new Error(
+                `Cannot parse the secret '${trimmedLine}'. Secret pairs must be of the form NAME=valueFrom, 
+                where valueFrom is an arn from parameter store or secrets manager. See AWS documentation for more information: 
+                https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html.`);
+          }
+          // Build object
+          const secret = {
+            name: trimmedLine.substring(0, separatorIdx),
+            valueFrom: trimmedLine.substring(separatorIdx + 1),
+          };
+
+          // Search container definition environment for one matching name
+          const secretDef = containerDef.secrets.find((s) => s.name == secret.name);
+          if (secretDef) {
+            // If found, update
+            secretDef.valueFrom = secret.valueFrom;
+          } else {
+            // Else, create
+            containerDef.secrets.push(secret);
+          }
+        })
+      }
+    }
 
     // Write out a new task definition file
     var updatedTaskDefFile = tmp.fileSync({

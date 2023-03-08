@@ -27,7 +27,9 @@ describe('Render task definition', () => {
             .mockReturnValueOnce('task-definition.json') // task-definition
             .mockReturnValueOnce('web')                  // container-name
             .mockReturnValueOnce('nginx:latest')         // image
-            .mockReturnValueOnce('FOO=bar\nHELLO=world'); // environment-variables
+            .mockReturnValueOnce('key1=value1\nkey2=value2') // dynamic-variables
+            .mockReturnValueOnce('FOO=bar\nHELLO=world') // environment-variables
+            .mockReturnValueOnce('SSM_SECRET=arn:aws:ssm:region:0123456789:parameter/secret\nSM_SECRET=arn:aws:secretsmanager:us-east-1:0123456789:secret:secretName')
 
         process.env = Object.assign(process.env, { GITHUB_WORKSPACE: __dirname });
         process.env = Object.assign(process.env, { RUNNER_TEMP: '/home/runner/work/_temp' });
@@ -53,7 +55,20 @@ describe('Render task definition', () => {
                             name: "DONT-TOUCH",
                             value: "me"
                         }
-                    ]
+                    ],
+                    secrets: [
+                        {
+                            name: "EXISTING_SECRET",
+                            valueFrom: "arn:aws:ssm:region:0123456789:parameter/existingSecret"
+                        },
+                        {
+                            name: "SSM_SECRET",
+                            valueFrom: "arn:aws:ssm:region:0123456789:parameter/oldSsmSecret"
+                        }
+
+                    ],
+                    something: "{{ key1 }}",
+                    another: "{{ key2 }}"
                 },
                 {
                     name: "sidecar",
@@ -92,7 +107,24 @@ describe('Render task definition', () => {
                                 name: "HELLO",
                                 value: "world"
                             }
-                        ]
+                        ],
+                        secrets: [
+                            {
+                                name: "EXISTING_SECRET",
+                                valueFrom: "arn:aws:ssm:region:0123456789:parameter/existingSecret"
+                            },    
+                            {
+                                name: "SSM_SECRET",
+                                valueFrom: 'arn:aws:ssm:region:0123456789:parameter/secret'
+                            },
+                            
+                            {
+                                name: "SM_SECRET",
+                                valueFrom: 'arn:aws:secretsmanager:us-east-1:0123456789:secret:secretName'
+                            }
+                        ],
+                        something: "value1",
+                        another: "value2"
                     },
                     {
                         name: "sidecar",
@@ -104,13 +136,15 @@ describe('Render task definition', () => {
         expect(core.setOutput).toHaveBeenNthCalledWith(1, 'task-definition', 'new-task-def-file-name');
     });
 
-    test('renders a task definition at an absolute path, and with initial environment empty', async () => {
+    test('renders a task definition at an absolute path, and with initial environment and secrets empty', async () => {
         core.getInput = jest
             .fn()
             .mockReturnValueOnce('/hello/task-definition.json') // task-definition
             .mockReturnValueOnce('web')                  // container-name
             .mockReturnValueOnce('nginx:latest')         // image
-            .mockReturnValueOnce('EXAMPLE=here');        // environment-variables
+            .mockReturnValueOnce('key1=value1\nkey2=value2') // dynamic-variables
+            .mockReturnValueOnce('EXAMPLE=here')
+            .mockReturnValueOnce('SECRET=arn:aws:ssm:region:0123456789:parameter/secret');        // environment-variables
         jest.mock('/hello/task-definition.json', () => ({
             family: 'task-def-family',
             containerDefinitions: [
@@ -142,6 +176,12 @@ describe('Render task definition', () => {
                                 name: "EXAMPLE",
                                 value: "here"
                             }
+                        ],
+                        secrets: [
+                            {
+                                name: "SECRET",
+                                valueFrom: 'arn:aws:ssm:region:0123456789:parameter/secret'
+                            }
                         ]
                     }
                 ]
@@ -150,7 +190,21 @@ describe('Render task definition', () => {
         expect(core.setOutput).toHaveBeenNthCalledWith(1, 'task-definition', 'new-task-def-file-name');
     });
 
-    test('error returned for missing task definition file', async () => {
+    test('error returned for malformatted secret string', async () => {
+        core.getInput = jest
+            .fn()
+            .mockReturnValueOnce('task-definition.json')
+            .mockReturnValueOnce('web')
+            .mockReturnValueOnce('nginx:latest')
+            .mockReturnValueOnce('key1=value1\nkey2=value2') // dynamic-variables
+            .mockReturnValueOnce('EXAMPLE=here')
+            .mockReturnValueOnce('SECRET'); 
+        await run();
+
+        expect(core.setFailed).toBeCalledWith(expect.stringContaining(`Cannot parse the secret 'SECRET'`));
+    });
+
+    test('error returned for invalid secret format', async () => {
         fs.existsSync.mockReturnValue(false);
         core.getInput = jest
             .fn()
